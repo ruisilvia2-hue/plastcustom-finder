@@ -1,26 +1,21 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/**/*.ts",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/((?!api/).*)",
-      "dest": "/index.html"
-    }
-  ]
+  "name": "plastcustom-finder",
+  "version": "1.0.0",
+  "description": "AI-powered search for plastic bag suppliers.",
+  "scripts": {
+    "build": "esbuild index.tsx --bundle --outfile=dist/bundle.js --jsx=automatic --loader:.ts=tsx --define:process.env.NODE_ENV='\"production\"' && cp index.html dist/index.html"
+  },
+  "dependencies": {
+    "@google/genai": "^1.20.0",
+    "@types/node": "^20.11.20",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vercel/node": "^3.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.3.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.4"
+  }
 }
