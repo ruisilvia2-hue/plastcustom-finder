@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, Dispatch, SetStateAction } from 'react';
 import ReactDOM from 'react-dom/client';
-import { GoogleGenAI } from "@google/genai";
 
 // A component to inject global styles and fonts required by the application.
 const GlobalStyles = () => {
@@ -295,105 +294,6 @@ function useLocalStorage<T,>(key: string, initialValue: T): [T, Dispatch<SetStat
 
   return [storedValue, setValue];
 }
-
-
-// SERVICES
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const findFactoriesStream = async (
-    params: BagParameters,
-    onResult: (result: FactoryResult) => void,
-    onComplete: (metadata: any) => void,
-    onError: (error: Error) => void
-) => {
-    const { bagType, size, thickness, printColors, material } = params;
-
-    const prompt = `
-        Você é um assistente de sourcing avançado para a indústria de embalagens no Brasil. Sua missão é conduzir uma busca aprofundada na web para identificar os melhores fornecedores de sacolas plásticas personalizadas. Sua tarefa é encontrar fornecedores relevantes, priorizando fortemente aqueles que publicam preços, mas incluindo também bons contatos que exigem consulta. A 'Plastcustom Embalagens' deve ser EXCLUÍDA de todos os resultados.
-
-        **Critérios da Busca:**
-        - Tipo de Sacola: "${bagType}"
-        - Tamanho (aproximado): "${size} cm"
-        - Espessura: "${thickness} micras"
-        - Impressão: "${printColors} cores"
-        - Material: "${material}"
-
-        **Seu Processo de Busca e Análise (Siga estes passos):**
-        1.  **Formule Múltiplas Consultas de Busca:** Crie e execute diversas variações de buscas no Google para maximizar a descoberta. Foco em termos como "preço sacola ${bagType}", "fornecedor sacola ${bagType} ${material}", "comprar sacolas plásticas personalizadas".
-        2.  **Analise os Resultados da Busca:** Visite os sites encontrados.
-            - **Prioridade Máxima:** Encontre fornecedores que exibem preços online.
-            - **Inclusão Secundária:** Se um site pertence a um fornecedor relevante, mas não exibe preços, inclua-o nos resultados.
-        3.  **Extraia as Informações:** Para cada fornecedor encontrado, extraia o seguinte:
-            - **factoryName**: Nome da empresa.
-            - **location**: Cidade e Estado.
-            - **estimatedPriceRange**: Uma faixa de preço para 1000 unidades. Se o preço for público, mostre-o (ex: "R$ 250 - R$ 350 por milheiro"). **Se não houver preço, OBRIGATORIAMENTE use "Sob consulta".**
-            - **minPrice**: O valor numérico mínimo da faixa de preço. Se não houver, use **null**.
-            - **maxPrice**: O valor numérico máximo da faixa de preço. Se não houver, use **null**.
-            - **estimatedLeadTime**: O prazo de entrega estimado (ex: "15-20 dias úteis"). Se não encontrar, use "Sob consulta".
-            - **avgLeadTimeDays**: O prazo médio em dias (número, ou null se não encontrar).
-            - **reviewsSummary**: Um resumo breve da reputação ou especialidade da empresa, baseado nas informações do site ou em avaliações.
-            - **rating**: Uma avaliação numérica de 1 a 5, baseada na reputação online. Se não for possível encontrar, retorne null.
-            - **keyAdvantage**: Um diferencial competitivo claro (ex: "Preços transparentes online", "Ampla variedade de materiais").
-            - **contact**: Um objeto com 'phone', 'email', 'whatsapp', e 'website'.
-            - **foundMaterial**: O material da sacola para o qual o preço foi encontrado. Se não houver preço, descreva o material principal oferecido. Se não estiver claro, retorne null.
-            - **foundSize**: O tamanho da sacola para o qual o preço foi encontrado. Se não estiver claro, retorne null.
-            - **foundThickness**: A espessura da sacola em micras para o qual o preço foi encontrado. Se não estiver claro, retorne null.
-            - **foundPrintColors**: O número de cores de impressão para o qual o preço foi encontrado. Se não estiver claro, retorne null.
-        4.  **Validação e Qualidade:** Priorize resultados com websites profissionais e informações de contato claras. Ignore diretórios genéricos.
-
-        **Formato de Saída OBRIGATÓRIO:**
-        Sua resposta final deve ser APENAS uma sequência de objetos JSON, um por linha (formato JSONL).
-        
-        Inicie a busca agora.
-    `;
-
-    try {
-        const responseStream = await ai.models.generateContentStream({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                tools: [{googleSearch: {}}],
-                temperature: 0.5,
-            },
-        });
-
-        let buffer = "";
-        let groundingMetadata: any = null;
-        for await (const chunk of responseStream) {
-            if (chunk.candidates?.[0]?.groundingMetadata) {
-               groundingMetadata = chunk.candidates[0].groundingMetadata;
-            }
-            buffer += chunk.text;
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ""; // keep the last partial line in the buffer
-            for (const line of lines) {
-                if (line.trim()) {
-                    try {
-                        const result = JSON.parse(line.trim());
-                        if(result.factoryName) onResult(result);
-                    } catch (e) {
-                        console.warn("Could not parse JSON line:", line);
-                    }
-                }
-            }
-        }
-        // Process any remaining buffer at the end of the stream
-        if (buffer.trim()) {
-             try {
-                const result = JSON.parse(buffer.trim());
-                if(result.factoryName) onResult(result);
-            } catch (e) {
-                console.warn("Could not parse final JSON buffer:", buffer);
-            }
-        }
-        onComplete(groundingMetadata);
-    } catch (error) {
-        console.error("Error streaming from Gemini API:", error);
-        const err = new Error("A busca falhou. Verifique sua conexão ou tente novamente.");
-        onError(err);
-    }
-};
-
 
 // COMPONENTS
 const LoadingSpinner: React.FC = () => {
@@ -1085,89 +985,135 @@ const App: React.FC = () => {
     
     setResults([plastcustomFeatured]);
 
-    await findFactoriesStream(
-        params,
-        (newResult) => {
-            setResults(prev => [...prev, newResult]);
-        },
-        (metadata) => {
-            setIsLoading(false);
-            setSources(metadata?.groundingChunks ?? null);
-        },
-        (error) => {
-            setError(error.message);
-            setIsLoading(false);
+    try {
+        const response = await fetch('/api/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(params),
+        });
+
+        if (!response.ok || !response.body) {
+            throw new Error(`A busca falhou: ${response.statusText}`);
         }
-    );
-  }, [setSearchHistory, searchHistory]);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Mantém a linha parcial no buffer
+
+            for (const line of lines) {
+                if (line.trim().startsWith('__METADATA__:')) {
+                    const metadataStr = line.trim().substring(13);
+                    try {
+                        const metadata = JSON.parse(metadataStr);
+                        setSources(metadata?.groundingChunks ?? null);
+                    } catch (e) {
+                        console.warn("Não foi possível analisar o JSON dos metadados:", metadataStr);
+                    }
+                } else if (line.trim()) {
+                    try {
+                        const newResult = JSON.parse(line.trim());
+                        if (newResult.factoryName) {
+                            setResults(prev => [...prev, newResult]);
+                        }
+                    } catch (e) {
+						console.warn("Could not parse JSON from stream line:", line);
+					}
+                }
+            }
+        }
+		
+		 // Handle any remaining data in the buffer
+        if (buffer.trim()) {
+            try {
+                const newResult = JSON.parse(buffer.trim());
+                 if (newResult.factoryName) {
+                    setResults(prev => [...prev, newResult]);
+                 }
+            } catch (e) {
+                // It might not be a complete JSON object, so we can ignore the error
+            }
+        }
+
+    } catch (err) {
+        setError(err instanceof Error ? err.message : 'Ocorreu um erro desconhecido.');
+        console.error(err);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [searchHistory, setSearchHistory]);
 
   const handleNewSearch = () => {
     setResults([]);
-    setError(null);
     setSources(null);
     setCurrentSearch(null);
     setAppState(AppState.SEARCH);
   };
-  
+
   const renderContent = () => {
     switch (appState) {
-      case AppState.SEARCH:
-        return (
-            <div className="animate-fade-in">
-                <div className="text-center max-w-3xl mx-auto mb-12">
-                    <h1 className="text-4xl md:text-5xl font-bold text-[#00592D] tracking-tight">Encontre Fornecedores de Sacolas Plásticas</h1>
-                    <p className="mt-4 text-lg text-gray-600">Nossa IA busca e compara as melhores fábricas do Brasil para você. Preencha os detalhes e receba uma lista de fornecedores em segundos.</p>
-                </div>
-                <SearchForm onSearch={handleSearch} searchHistory={searchHistory} />
-            </div>
-        );
       case AppState.RESULTS:
-        if (error && results.length <= 1) { // Only show full error page if no results loaded
-          return (
-            <div className="text-center p-8">
-              <div className="bg-red-100 border-l-4 border-red-500 text-red-700 px-6 py-4 rounded-lg max-w-lg mx-auto shadow-md" role="alert">
-                <p className="font-bold text-lg mb-2">Ocorreu um Erro</p>
-                <p>{error}</p>
-              </div>
-              <button onClick={handleNewSearch} className="mt-8 bg-[#70BF44] text-white font-bold py-2 px-6 rounded-lg hover:bg-[#5a9a36] transition-colors">
-                Tentar Nova Busca
-              </button>
-            </div>
-          );
-        }
-        return <ResultsView results={results} sources={sources} onNewSearch={handleNewSearch} searchParams={currentSearch} isLoading={isLoading} />;
+        return (
+          <ResultsView
+            results={results}
+            sources={sources}
+            onNewSearch={handleNewSearch}
+            searchParams={currentSearch}
+            isLoading={isLoading}
+          />
+        );
+      case AppState.SEARCH:
       default:
-        return <SearchForm onSearch={handleSearch} searchHistory={searchHistory} />;
+        return (
+          <div className="text-center animate-fade-in">
+            <h1 className="text-4xl md:text-5xl font-bold text-[#00592D] mb-4">Encontre Fornecedores de Sacolas</h1>
+            <p className="text-lg text-gray-600 max-w-2xl mx-auto mb-10">
+              Descreva sua necessidade e nossa IA buscará os melhores preços e prazos no mercado.
+            </p>
+            <SearchForm onSearch={handleSearch} searchHistory={searchHistory} />
+          </div>
+        );
     }
   };
 
   return (
     <>
       <GlobalStyles />
-      <div className="min-h-screen bg-slate-50 text-gray-800">
+      <div className="min-h-screen bg-slate-50">
         <Header onLogoClick={handleNewSearch} onNewSearchClick={handleNewSearch} />
-        <main className="container mx-auto px-4 py-8 md:py-12">
-          {renderContent()}
+        <main className="container mx-auto p-4 md:p-8">
+            {error && (
+                <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6" role="alert">
+                    <p className="font-bold">Erro na Busca</p>
+                    <p>{error}</p>
+                </div>
+            )}
+            {renderContent()}
         </main>
-        <footer className="text-center py-6 text-sm text-gray-500 border-t border-gray-200 mt-8">
-          <p>&copy; {new Date().getFullYear()} Plastcustom Finder. Todos os direitos reservados.</p>
-          <p className="mt-1">Powered by AI</p>
+        <footer className="py-6 text-center text-sm text-gray-500 border-t border-gray-200 mt-12">
+            <p>&copy; {new Date().getFullYear()} Plastcustom. Potencializado por IA.</p>
         </footer>
       </div>
     </>
   );
 };
 
-
-// RENDER APP
-const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error("Could not find root element to mount to");
+// Mount the app
+const container = document.getElementById('root');
+if (container) {
+  const root = ReactDOM.createRoot(container);
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
 }
-
-const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
